@@ -1,0 +1,16 @@
+config.json
+utils/generar_invitacion.go
+
+mute_data.json
+
+*.exe
+*.dll
+*.so
+*.dylib
+/DiscMuteBot
+
+*.tmp
+*.bak
+*.swp
+*~
+.DS_Store 
