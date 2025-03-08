@@ -1,26 +1,28 @@
 package main
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"github.com/bwmarrin/discordgo"
 	"log"
 	"os"
 	"os/signal"
 	"strings"
 	"time"
+
+	"github.com/bwmarrin/discordgo"
 )
 
 const (
 	VOTE_DURATION = 10 * time.Minute
 	MUTE_DURATION = 5 * time.Minute
-	VOTES_NEEDED = 5
+	VOTES_NEEDED  = 5
 )
 
 type MuteInfo struct {
-	MutedBy    map[string]time.Time `json:"muted_by"`
-	MuteExpiry time.Time           `json:"mute_expiry"`
-	IsGloballyMuted bool           `json:"is_globally_muted"`
+	MutedBy         map[string]time.Time `json:"muted_by"`
+	MuteExpiry      time.Time            `json:"mute_expiry"`
+	IsGloballyMuted bool                 `json:"is_globally_muted"`
 }
 
 type MuteData struct {
@@ -38,18 +40,18 @@ var (
 func init() {
 	// Inicializar el mapa
 	muteData.MutedUsers = make(map[string]MuteInfo)
-	
+
 	// Cargar configuración
 	configFile, err := os.ReadFile("config.json")
 	if err != nil {
 		log.Fatalf("Error al leer archivo de configuración: %v", err)
 	}
-	
+
 	err = json.Unmarshal(configFile, &config)
 	if err != nil {
 		log.Fatalf("Error al parsear archivo de configuración: %v", err)
 	}
-	
+
 	// Cargar datos existentes si existen
 	loadMuteData()
 }
@@ -69,10 +71,10 @@ func main() {
 	}
 
 	// Actualizar los intents para incluir mensajes y otros permisos necesarios
-	dg.Identify.Intents = discordgo.IntentsGuilds | 
-		discordgo.IntentsGuildVoiceStates | 
+	dg.Identify.Intents = discordgo.IntentsGuilds |
+		discordgo.IntentsGuildVoiceStates |
 		discordgo.IntentsGuildMembers |
-		discordgo.IntentsGuildMessages | 
+		discordgo.IntentsGuildMessages |
 		discordgo.IntentsMessageContent
 
 	// Registrar handlers con más logs
@@ -84,15 +86,15 @@ func main() {
 			log.Printf("- Servidor: %s (ID: %s)", g.Name, g.ID)
 		}
 	})
-	
+
 	dg.AddHandler(voiceStateUpdate)
 	dg.AddHandler(messageCreate)
-	
+
 	// Agregar manejador de errores
 	dg.AddHandler(func(s *discordgo.Session, e *discordgo.Connect) {
 		log.Println("Conectado a Discord")
 	})
-	
+
 	dg.AddHandler(func(s *discordgo.Session, e *discordgo.Disconnect) {
 		log.Println("Desconectado de Discord")
 	})
@@ -130,7 +132,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		// Mostrar servidores a los que pertenece el bot
 		var servidores strings.Builder
 		servidores.WriteString("🤖 **Servidores a los que pertenezco:**\n\n")
-		
+
 		if len(s.State.Guilds) == 0 {
 			servidores.WriteString("No estoy en ningún servidor. ¡Invítame usando el enlace generado por la utilidad!\n")
 		} else {
@@ -143,7 +145,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 				servidores.WriteString(fmt.Sprintf("%d. **%s** (ID: %s)\n", i+1, guild.Name, guild.ID))
 				servidores.WriteString(fmt.Sprintf("   - Miembros: %d\n", guild.MemberCount))
 				servidores.WriteString(fmt.Sprintf("   - Región: %s\n", guild.Region))
-				
+
 				// Intentar obtener el rol del bot
 				member, err := s.GuildMember(g.ID, s.State.User.ID)
 				if err != nil {
@@ -157,7 +159,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 						if err != nil {
 							servidores.WriteString(fmt.Sprintf("Role %s (error), ", roleID))
 						} else {
-							servidores.WriteString(fmt.Sprintf("%s", role.Name))
+							servidores.WriteString(role.Name)
 							if j < len(member.Roles)-1 {
 								servidores.WriteString(", ")
 							}
@@ -167,12 +169,12 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 				}
 			}
 		}
-		
+
 		servidores.WriteString("\n**Nota:** Si no ves el bot en el servidor, es posible que necesites:**\n")
 		servidores.WriteString("1. Asignar un rol al bot para hacerlo visible\n")
 		servidores.WriteString("2. Verificar que el bot tenga permisos para ver el canal donde estás escribiendo\n")
 		servidores.WriteString("3. Re-invitar al bot usando el enlace generado por `utils/generar_invitacion.go`\n")
-		
+
 		s.ChannelMessageSend(m.ChannelID, servidores.String())
 	case m.Content == "!calladitodebug":
 		debugInfo := fmt.Sprintf("```\nInformación de Depuración:\n"+
@@ -209,6 +211,54 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		handleMuteStatus(s, m)
 	case m.Content == "!calladitohelp":
 		handleHelp(s, m)
+	case strings.HasPrefix(m.Content, "!calladitoclean"):
+		if len(m.Mentions) == 0 {
+			s.ChannelMessageSend(m.ChannelID, "❌ Por favor, menciona a un usuario para limpiar sus votos. Ejemplo: `!calladitoclean @usuario`")
+			return
+		}
+
+		// Verificar si el autor del mensaje es administrador
+		member, err := s.GuildMember(m.GuildID, m.Author.ID)
+		if err != nil {
+			s.ChannelMessageSend(m.ChannelID, "❌ Error al verificar permisos de administrador")
+			log.Printf("Error al verificar permisos de administrador: %v", err)
+			return
+		}
+
+		// Verificar si el usuario tiene permisos de administrador
+		hasAdminPerms := false
+
+		// Obtener roles del servidor
+		guildRoles, err := s.GuildRoles(m.GuildID)
+		if err != nil {
+			s.ChannelMessageSend(m.ChannelID, "❌ Error al verificar permisos de administrador")
+			log.Printf("Error al obtener roles del servidor: %v", err)
+			return
+		}
+
+		for _, roleID := range member.Roles {
+			for _, guildRole := range guildRoles {
+				if guildRole.ID == roleID {
+					// Verificar si el rol tiene permisos de administrador
+					if guildRole.Permissions&discordgo.PermissionAdministrator == discordgo.PermissionAdministrator {
+						hasAdminPerms = true
+						break
+					}
+				}
+			}
+			if hasAdminPerms {
+				break
+			}
+		}
+
+		if !hasAdminPerms {
+			s.ChannelMessageSend(m.ChannelID, "❌ No tienes permisos de administrador para usar este comando")
+			return
+		}
+
+		// Procesar la mención
+		target := m.Mentions[0]
+		handleClean(s, m, target)
 	}
 }
 
@@ -236,7 +286,7 @@ func handleMute(s *discordgo.Session, m *discordgo.MessageCreate, target *discor
 	// Si ya está muteado, informar y salir. Que no se pasen de listos...
 	if muteInfo.IsGloballyMuted && time.Now().Before(muteInfo.MuteExpiry) {
 		timeLeft := time.Until(muteInfo.MuteExpiry).Round(time.Second)
-		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("🔇 %s ya está silenciado en canales de voz. El mute terminará en: %s", 
+		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("🔇 %s ya está silenciado en canales de voz. El mute terminará en: %s",
 			target.Username, timeLeft))
 		return
 	}
@@ -246,7 +296,7 @@ func handleMute(s *discordgo.Session, m *discordgo.MessageCreate, target *discor
 
 	// Verificar si el usuario ya ha votado y su voto no ha expirado
 	if expiry, hasVoted := muteInfo.MutedBy[m.Author.ID]; hasVoted && time.Now().Before(expiry) {
-		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("⚠️ Ya has votado para silenciar a %s. Tu voto expira en: %s", 
+		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("⚠️ Ya has votado para silenciar a %s. Tu voto expira en: %s",
 			target.Username, time.Until(expiry).Round(time.Minute).String()))
 		return
 	}
@@ -256,6 +306,9 @@ func handleMute(s *discordgo.Session, m *discordgo.MessageCreate, target *discor
 
 	// Contar votos activos
 	activeVotes := len(muteInfo.MutedBy)
+
+	// Registrar el voto en el log
+	logAction("VOTE", m.Author.Username, target.Username, activeVotes, m.GuildID)
 
 	// Verificar si se alcanzó el umbral de votos y el usuario no está muteado globalmente
 	if activeVotes >= VOTES_NEEDED && !muteInfo.IsGloballyMuted {
@@ -277,7 +330,10 @@ func handleMute(s *discordgo.Session, m *discordgo.MessageCreate, target *discor
 
 		muteInfo.IsGloballyMuted = true
 		muteInfo.MuteExpiry = time.Now().Add(MUTE_DURATION)
-		
+
+		// Registrar el mute en el log
+		logAction("MUTE", m.Author.Username, target.Username, activeVotes, m.GuildID)
+
 		// Programar el desmuteo automático
 		time.AfterFunc(MUTE_DURATION, func() {
 			unmuteUser(s, m.GuildID, target.ID)
@@ -293,15 +349,15 @@ func handleMute(s *discordgo.Session, m *discordgo.MessageCreate, target *discor
 		}
 
 		if isInVoiceChannel {
-			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("🔇 %s ha sido muteado en canales de voz por %d minutos.", 
-				target.Username, MUTE_DURATION.Minutes()))
+			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("🔇 %s ha sido muteado en canales de voz por %d minutos.",
+				target.Username, int(MUTE_DURATION.Minutes())))
 		} else {
-			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("🔇 %s será muteado cuando se conecte a un canal de voz. El silenciamiento durará %d minutos.", 
-				target.Username, MUTE_DURATION.Minutes()))
+			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("🔇 %s será muteado cuando se conecte a un canal de voz. El silenciamiento durará %d minutos.",
+				target.Username, int(MUTE_DURATION.Minutes())))
 		}
 	} else {
-		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("✅ Voto registrado contra %s. Votos actuales: %d/%d\nTu voto expira en %d minutos.", 
-			target.Username, activeVotes, VOTES_NEEDED, VOTE_DURATION.Minutes()))
+		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("✅ Voto registrado contra %s. Votos actuales: %d/%d\nTu voto expira en %d minutos.",
+			target.Username, activeVotes, VOTES_NEEDED, int(VOTE_DURATION.Minutes())))
 	}
 
 	muteData.MutedUsers[target.ID] = muteInfo
@@ -334,9 +390,9 @@ func handleMuteInfo(s *discordgo.Session, m *discordgo.MessageCreate, targetID s
 
 	// Crear mensaje con la información
 	var msg strings.Builder
-	msg.WriteString(fmt.Sprintf("📊 Votos activos para mutear a %s (%d/%d):\n```\n", 
+	msg.WriteString(fmt.Sprintf("📊 Votos activos para mutear a %s (%d/%d):\n```\n",
 		user.Username, len(muteInfo.MutedBy), VOTES_NEEDED))
-	
+
 	for voterID, expiry := range muteInfo.MutedBy {
 		// Intentar obtener el username del votante
 		username := "Usuario " + voterID
@@ -344,7 +400,7 @@ func handleMuteInfo(s *discordgo.Session, m *discordgo.MessageCreate, targetID s
 		if err == nil {
 			username = voter.Username
 		}
-		
+
 		timeLeft := time.Until(expiry).Round(time.Second)
 		msg.WriteString(fmt.Sprintf("%s (expira en: %s)\n", username, timeLeft))
 	}
@@ -387,7 +443,7 @@ func handleMuteInfoAll(s *discordgo.Session, m *discordgo.MessageCreate) {
 	// Crear mensaje con todos los usuarios que tienen votos
 	var msg strings.Builder
 	msg.WriteString("📊 **Usuarios con votos activos:**\n\n")
-	
+
 	for userID, muteInfo := range muteData.MutedUsers {
 		// Obtener info del usuario
 		username := "Usuario " + userID
@@ -395,22 +451,22 @@ func handleMuteInfoAll(s *discordgo.Session, m *discordgo.MessageCreate) {
 		if err == nil {
 			username = user.Username
 		}
-		
+
 		if muteInfo.IsGloballyMuted {
 			timeLeft := time.Until(muteInfo.MuteExpiry).Round(time.Second)
 			if timeLeft > 0 {
-				msg.WriteString(fmt.Sprintf("🔇 **%s**: Silenciado en voz por %s más - Votos: %d/%d\n", 
+				msg.WriteString(fmt.Sprintf("🔇 **%s**: Silenciado en voz por %s más - Votos: %d/%d\n",
 					username, timeLeft, len(muteInfo.MutedBy), VOTES_NEEDED))
 			} else {
-				msg.WriteString(fmt.Sprintf("📊 **%s**: Votos: %d/%d\n", 
+				msg.WriteString(fmt.Sprintf("📊 **%s**: Votos: %d/%d\n",
 					username, len(muteInfo.MutedBy), VOTES_NEEDED))
 			}
 		} else {
-			msg.WriteString(fmt.Sprintf("📊 **%s**: Votos: %d/%d\n", 
+			msg.WriteString(fmt.Sprintf("📊 **%s**: Votos: %d/%d\n",
 				username, len(muteInfo.MutedBy), VOTES_NEEDED))
 		}
 	}
-	
+
 	msg.WriteString("\nUsa `!calladitoinfo @usuario` para ver detalles de un usuario específico.")
 	s.ChannelMessageSend(m.ChannelID, msg.String())
 }
@@ -419,22 +475,23 @@ func handleMuteStatus(s *discordgo.Session, m *discordgo.MessageCreate) {
 	var msg strings.Builder
 	msg.WriteString("📋 **Estado del sistema de mute:**\n")
 	msg.WriteString(fmt.Sprintf("- Votos necesarios: **%d**\n", VOTES_NEEDED))
-	msg.WriteString(fmt.Sprintf("- Duración de votos: **%d minutos**\n", VOTE_DURATION.Minutes()))
-	msg.WriteString(fmt.Sprintf("- Duración de mute: **%d minutos**\n", MUTE_DURATION.Minutes()))
-	
+	msg.WriteString(fmt.Sprintf("- Duración de votos: **%d minutos**\n", int(VOTE_DURATION.Minutes())))
+	msg.WriteString(fmt.Sprintf("- Duración de mute: **%d minutos**\n", int(MUTE_DURATION.Minutes())))
+
 	s.ChannelMessageSend(m.ChannelID, msg.String())
 }
 
 func handleHelp(s *discordgo.Session, m *discordgo.MessageCreate) {
 	help := "📌 **Comandos de Silenciamiento de Voz:**\n\n" +
-		   "**!calladito @usuario** - Vota para silenciar al usuario mencionado en canales de voz\n" +
-		   "**!calladitoinfo** - Muestra todos los usuarios con votos activos\n" +
-		   "**!calladitoinfo @usuario** - Muestra los votos para un usuario específico\n" +
-		   "**!calladitostatus** - Muestra la configuración del sistema de silenciamiento\n" +
-		   "**!calladitohelp** - Muestra este mensaje de ayuda\n\n" +
-		   fmt.Sprintf("Se necesitan **%d votos** para silenciar a un usuario por **%d minutos**. El silenciamiento solo afecta a los canales de voz.", 
-			   VOTES_NEEDED, MUTE_DURATION.Minutes())
-	
+		"**!calladito @usuario** - Vota para silenciar al usuario mencionado en canales de voz\n" +
+		"**!calladitoinfo** - Muestra todos los usuarios con votos activos\n" +
+		"**!calladitoinfo @usuario** - Muestra los votos para un usuario específico\n" +
+		"**!calladitostatus** - Muestra la configuración del sistema de silenciamiento\n" +
+		"**!calladitoclean @usuario** - (Solo administradores) Elimina todos los votos contra un usuario\n" +
+		"**!calladitohelp** - Muestra este mensaje de ayuda\n\n" +
+		fmt.Sprintf("Se necesitan **%d votos** para silenciar a un usuario por **%d minutos**. El silenciamiento solo afecta a los canales de voz.",
+			VOTES_NEEDED, int(MUTE_DURATION.Minutes()))
+
 	s.ChannelMessageSend(m.ChannelID, help)
 }
 
@@ -452,26 +509,30 @@ func unmuteUser(s *discordgo.Session, guildID string, userID string) {
 	if !exists || !muteInfo.IsGloballyMuted {
 		return
 	}
-	
+
 	err := s.GuildMemberMute(guildID, userID, false)
 	if err != nil {
-		log.Printf("Error al quitar silenciamiento a %s: %v", userID, err)
+		log.Printf("Error al desmutar al usuario %s: %v", userID, err)
 		return
 	}
 
-	// Obtener info del usuario
-	username := "Usuario " + userID
+	// Actualizar el estado del usuario
+	muteInfo.IsGloballyMuted = false
+	muteData.MutedUsers[userID] = muteInfo
+	saveMuteData()
+
+	// Registrar la acción en el log
+	// Obtener el nombre del usuario
 	user, err := s.User(userID)
+	username := userID // Por defecto, usar el ID si no podemos obtener el nombre
 	if err == nil {
 		username = user.Username
 	}
 
-	// Notificar en un canal de log (no tenemos m.ChannelID aquí, así que es mejor no enviarlo o implementar otra solución)
-	log.Printf("🔊 El silenciamiento de voz de %s ha finalizado", username)
+	logAction("UNMUTE", "System", username, 0, guildID)
 
-	muteInfo.IsGloballyMuted = false
-	muteData.MutedUsers[userID] = muteInfo
-	saveMuteData()
+	// Log para debug
+	log.Printf("Usuario %s desmuteado automáticamente", userID)
 }
 
 func voiceStateUpdate(s *discordgo.Session, v *discordgo.VoiceStateUpdate) {
@@ -523,5 +584,84 @@ func saveMuteData() {
 	err = os.WriteFile(muteFile, data, 0644)
 	if err != nil {
 		log.Printf("Error al guardar archivo de mutes: %v", err)
+	}
+}
+
+func handleClean(s *discordgo.Session, m *discordgo.MessageCreate, target *discordgo.User) {
+	// Verificar si el usuario está en la lista de mute
+	_, exists := muteData.MutedUsers[target.ID]
+	if !exists {
+		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("🧹 El usuario %s no tiene votos activos", target.Username))
+		return
+	}
+
+	// Si el usuario está muteado, desmutear
+	if muteData.MutedUsers[target.ID].IsGloballyMuted {
+		err := s.GuildMemberMute(m.GuildID, target.ID, false)
+		if err != nil {
+			log.Printf("Error al desmutar a %s: %v", target.Username, err)
+			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("⚠️ Error al desmutar a %s", target.Username))
+		} else {
+			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("🔊 %s ha sido desmuteado por un administrador", target.Username))
+		}
+	}
+
+	// Eliminar al usuario de la lista de mute
+	delete(muteData.MutedUsers, target.ID)
+	saveMuteData()
+
+	// Registrar la acción en el log
+	logAction("CLEAN", m.Author.Username, target.Username, 0, m.GuildID)
+
+	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("🧹 Se han eliminado todos los votos contra %s", target.Username))
+}
+
+// Sistema de logs
+func logAction(actionType, initiator, target string, currentVotes int, guildID string) {
+	// Crear directorio de logs si no existe
+	err := os.MkdirAll("logs", 0755)
+	if err != nil {
+		log.Printf("Error al crear directorio de logs: %v", err)
+		return
+	}
+
+	// Nombre del archivo basado en la fecha actual
+	currentDate := time.Now().Format("2006-01-02")
+	logFile := fmt.Sprintf("logs/%s.csv", currentDate)
+
+	// Verificar si el archivo existe
+	fileExists := false
+	if _, err := os.Stat(logFile); err == nil {
+		fileExists = true
+	}
+
+	// Abrir archivo en modo append
+	file, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Printf("Error al abrir archivo de log: %v", err)
+		return
+	}
+	defer file.Close()
+
+	// Escribir encabezado si el archivo es nuevo
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+
+	if !fileExists {
+		header := []string{"Timestamp", "ActionType", "Initiator", "Target", "CurrentVotes", "GuildID"}
+		err = writer.Write(header)
+		if err != nil {
+			log.Printf("Error al escribir encabezado de log: %v", err)
+			return
+		}
+	}
+
+	// Escribir registro
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	record := []string{timestamp, actionType, initiator, target, fmt.Sprintf("%d", currentVotes), guildID}
+	err = writer.Write(record)
+	if err != nil {
+		log.Printf("Error al escribir registro de log: %v", err)
+		return
 	}
 }

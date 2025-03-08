@@ -1,21 +1,38 @@
-# Use the official Golang image as the base image
-FROM golang:1.19-alpine
+# Usar la imagen oficial de Golang
+FROM golang:1.22-alpine AS builder
 
-# Set the Current Working Directory inside the container
+# Establecer el directorio de trabajo
 WORKDIR /app
 
-# Copy go.mod and go.sum files
+# Copiar go.mod y go.sum
 COPY go.mod ./
 COPY go.sum ./
 
-# Download all dependencies. Dependencies will be cached if the go.mod and go.sum files are not changed
+# Descargar dependencias
 RUN go mod download
 
-# Copy the source from the current directory to the Working Directory inside the container
+# Copiar el código fuente
 COPY . .
 
-# Build the Go app
+# Compilar la aplicación
 RUN go build -o DiscMuteBot bot/main.go
 
-# Command to run the executable
+# Crear imagen final
+FROM alpine:latest
+
+WORKDIR /app
+
+# Instalar CA certificates para HTTPS
+RUN apk --no-cache add ca-certificates
+
+# Copiar ejecutable compilado
+COPY --from=builder /app/DiscMuteBot .
+
+# Crear directorio de logs
+RUN mkdir -p logs
+
+# Puerto para posibles expansiones (no es necesario para un bot de Discord)
+EXPOSE 8080
+
+# Ejecutar el bot
 CMD ["./DiscMuteBot"]

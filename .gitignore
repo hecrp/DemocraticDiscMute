@@ -1,5 +1,6 @@
 config.json
 utils/generar_invitacion.go
+logs/*.csv
 
 mute_data.json
 
