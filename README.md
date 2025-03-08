@@ -75,6 +75,7 @@ Example using the helper script:
 ```bash
 chmod +x utils/docker_build.sh  # Make script executable
 ./utils/docker_build.sh help    # Show available commands
+```
 
 ## 📝 Commands
 
