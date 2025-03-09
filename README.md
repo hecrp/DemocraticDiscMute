@@ -39,13 +39,7 @@ A Discord bot that allows users to democratically vote to mute other users in vo
    go build -o DiscMuteBot bot/main.go
    ```
 
-4. Generate an invitation link:
-   ```
-   cd utils
-   go run generar_invitacion.go
-   ```
-
-5. Run the bot:
+4. Run the bot:
    ```
    ./DiscMuteBot
    ```
