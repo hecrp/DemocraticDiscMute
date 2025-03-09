@@ -42,7 +42,7 @@ A Discord bot that allows users to democratically vote to mute other users in vo
 4. Generate an invitation link:
    ```
    cd utils
-   go run generar_invitacion.go
+   go run generate_invitation.go
    ```
 
 5. Run the bot:
@@ -79,19 +79,15 @@ chmod +x utils/docker_build.sh  # Make script executable
 
 ## 📝 Commands
 
-- `!calladitohelp` - Show available commands
-
-*Basic interactions:*
-- `!calladito @user` - Vote to mute the mentioned user in voice channels
-- `!calladitoinfo` - Show all users with active votes
-- `!calladitoinfo @user` - Show votes for a specific user
-- `!calladitostatus` - Show mute system configuration
-
-*Extra commands*
-- `!calladitoclean @user` - (Admin only) Clear all votes against a user and unmute them if necessary
-- `!calladitoping` - Check if the bot is active
-- `!calladitodebug` - Show detailed information about the bot
-- `!calladitoservidores` - Show servers where the bot is present
+- `!mute @user` - Vote to mute the mentioned user in voice channels
+- `!muteinfo` - Show all users with active votes
+- `!muteinfo @user` - Show votes for a specific user
+- `!mutestatus` - Show mute system configuration
+- `!clean @user` - (Admin only) Clear all votes against a user and unmute them if necessary
+- `!ping` - Check if the bot is active
+- `!debug` - Show detailed information about the bot
+- `!servers` - Show servers where the bot is present
+- `!help` - Show available commands
 
 ## 📊 Logging System
 
